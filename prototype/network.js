@@ -117,9 +117,7 @@ class GraphNode {
     }
     ctx.restore();
 
-    // A focused leaf's name/type/literals are shown by the HTML card that
-    // hangs below it (see app.js's positionCenterLabel) — skip the canvas label.
-    if (!focused) this.drawLabel(ctx, radius);
+    this.drawLabel(ctx, radius);
   }
 
   drawLabel(ctx, radiusOffset) {

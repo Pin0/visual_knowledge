@@ -32,84 +32,8 @@ body {
   background: #f4f4f4;
 }
 
-/* Tracks the currently open node's position every frame (see app.js's
-   positionCenterLabel) so entity details stay inside its donut hole even
-   as the node drifts around under the force layout. */
-#center-label {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 190px;
-  max-height: 196px;
-  overflow: hidden;
-  text-align: center;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-
 .hidden {
   display: none !important;
-}
-
-/* Over a photo, plain gray text is unreadable — switch to a scrim + white text. */
-#center-label.on-image {
-  background: rgba(0, 0, 0, 0.55);
-  border-radius: 10px;
-  color: #fff;
-  padding: 8px 10px;
-}
-
-#center-label.on-image #entity-type {
-  color: rgba(255, 255, 255, 0.7);
-}
-
-#center-label.on-image .lit-name {
-  color: rgba(255, 255, 255, 0.6);
-}
-
-/* Dead-end (leaf) nodes are too small to hold text inside their circle, so
-   the panel hangs below them instead, styled as a floating card. */
-#center-label.below {
-  transform: translate(-50%, 0);
-  background: #fff;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 8px;
-  padding: 10px 12px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
-}
-
-#entity-name {
-  margin: 0 0 3px;
-  font-size: 14px;
-  line-height: 1.15;
-}
-
-#entity-type {
-  margin: 0 0 6px;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #aaa;
-}
-
-#entity-literals {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  font-size: 11px;
-  color: #777;
-  text-align: left;
-}
-
-#entity-literals li {
-  margin-bottom: 4px;
-  cursor: default;
-  pointer-events: auto;
-}
-
-#entity-literals li + li {
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
-  padding-top: 4px;
 }
 
 .lit-name {

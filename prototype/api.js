@@ -273,15 +273,31 @@ function labelFor(key) {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+// Escapes Lucene wildcard syntax (`*`, `?`, `\`) so a keyword the user typed
+// is matched literally rather than as a pattern.
+function escapeWildcard(text) {
+  return text.replace(/[\\*?]/g, "\\$&");
+}
+
 // Generic reverse-link lookup: every record referencing `iri` from ANY of its
 // own fields, regardless of record type or property — see /search/records'
-// `_link` field. Optionally narrowed with a full-text keyword (needed since a
-// popular concept/person can be linked from hundreds of thousands of records).
+// `_link` field. Optionally narrowed by a keyword matched anywhere inside the
+// title (not just whole words — `title`'s `wildcard` operator, confirmed live
+// against the API, is what makes "kerk" match "Nieuwe Kerkstraat"). Needed
+// since a popular concept/person can be linked from hundreds of thousands of
+// records.
 async function fetchBacklinks(iri, { keyword = "", page = 1, perPage = 12 } = {}) {
   const linkQuery = { type: "FieldQuery", operator: "equals", field: "_link", value: iri };
-  const query = keyword.trim()
-    ? { type: "AndQuery", queries: [linkQuery, { type: "FullTextQuery", query: keyword.trim() }] }
-    : linkQuery;
+  const trimmed = keyword.trim();
+  // A 1-character wildcard (*a*) is an extremely broad, expensive query for
+  // little benefit, so only narrow once there's something meaningful to match.
+  const query =
+    trimmed.length >= 2
+      ? {
+          type: "AndQuery",
+          queries: [linkQuery, { type: "FieldQuery", operator: "wildcard", field: "title", value: `*${escapeWildcard(trimmed)}*` }],
+        }
+      : linkQuery;
 
   const res = await fetch(`${API_BASE}/search/records`, {
     method: "POST",

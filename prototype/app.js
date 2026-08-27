@@ -1,10 +1,6 @@
 const canvas = document.getElementById("stage");
 const ctx = canvas.getContext("2d");
 
-const centerLabelEl = document.getElementById("center-label");
-const nameEl = document.getElementById("entity-name");
-const typeEl = document.getElementById("entity-type");
-const literalsEl = document.getElementById("entity-literals");
 const hintEl = document.getElementById("hint");
 const segmentInfoEl = document.getElementById("segment-info");
 
@@ -23,6 +19,7 @@ const backlinksMoreEl = document.getElementById("backlinks-more");
 const DEFAULT_ENTITY_IRI = "https://id.archief.amsterdam/resources/records/02b5176c-8dec-7410-a81b-b87cd82537c2";
 const SPAWN_DISTANCE = 180;
 const BACKLINKS_PER_PAGE = 12;
+const BACKLINKS_DEBOUNCE_MS = 700;
 const ZOOM_MIN = 0.3;
 const ZOOM_MAX = 2.5;
 
@@ -66,10 +63,6 @@ function toWorld(mx, my) {
   return { wx: (mx - viewport.x) / viewport.scale, wy: (my - viewport.y) / viewport.scale };
 }
 
-function toScreen(wx, wy) {
-  return { sx: wx * viewport.scale + viewport.x, sy: wy * viewport.scale + viewport.y };
-}
-
 function selectNode(node) {
   network.select(node);
   updateEntityPanel(node.entity);
@@ -79,15 +72,6 @@ function selectNode(node) {
 }
 
 function updateEntityPanel(entity) {
-  nameEl.textContent = entity.name;
-  typeEl.textContent = entity.typeLabel || "";
-  literalsEl.innerHTML = "";
-  for (const lit of entity.literals) {
-    const li = document.createElement("li");
-    li.title = lit.value;
-    li.innerHTML = `<span class="lit-name">${lit.name}</span><span class="lit-value">${truncate(lit.value, 90)}</span>`;
-    literalsEl.appendChild(li);
-  }
   hintEl.textContent = entity.segments.length
     ? "Hover the open node to inspect it, click a wedge to add a connected node. Click any node to bring it into focus; drag to rearrange."
     : "No linked records to explore from here. Click another node to bring it into focus.";
@@ -101,31 +85,6 @@ function updateEntityPanel(entity) {
     const li = document.createElement("li");
     li.innerHTML = `<span class="lit-name">${lit.name}</span><span class="lit-value">${lit.value}</span>`;
     detailLiteralsEl.appendChild(li);
-  }
-}
-
-// Keeps the entity-details card glued to the currently open node — inside
-// its ring's hole while it has one, or hanging below it when it's a leaf
-// (dead-end) node that's just a small focused circle. Follows the current
-// pan/zoom (the card itself stays a constant screen size, only its position
-// tracks the node).
-function positionCenterLabel() {
-  const open = network.openNode;
-  if (!open) {
-    centerLabelEl.classList.add("hidden");
-    return;
-  }
-  centerLabelEl.classList.remove("hidden");
-  centerLabelEl.classList.toggle("below", open.isLeaf);
-  centerLabelEl.classList.toggle("on-image", !open.isLeaf && open.imageLoaded);
-
-  const screen = toScreen(open.x, open.y);
-  centerLabelEl.style.left = `${screen.sx}px`;
-  if (open.isLeaf) {
-    const worldOffset = FOCUSED_LEAF_RADIUS + HALO_PAD + 24;
-    centerLabelEl.style.top = `${screen.sy + worldOffset * viewport.scale}px`;
-  } else {
-    centerLabelEl.style.top = `${screen.sy}px`;
   }
 }
 
@@ -231,7 +190,7 @@ backlinksFilterEl.addEventListener("input", () => {
   backlinksDebounce = setTimeout(() => {
     const iri = network.openNode?.entity.id;
     if (iri) loadBacklinks(iri, keyword, 1);
-  }, 300);
+  }, BACKLINKS_DEBOUNCE_MS);
 });
 
 backlinksMoreEl.addEventListener("click", () => {
@@ -348,7 +307,6 @@ function frame() {
   network.draw(ctx);
   ctx.restore();
 
-  positionCenterLabel();
   requestAnimationFrame(frame);
 }
 
