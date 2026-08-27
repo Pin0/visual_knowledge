@@ -1,5 +1,7 @@
 h1. Visual Knowledge Browser
 
+Live demo: https://pin0.github.io/visual_knowledge/
+
 Based on ASK KEN™ - Visual Knowledge Browser from 17 jears ago. (example folder)
 
 This tool allows users to explore linked data (triples) in a visual way
