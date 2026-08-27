@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Visual Knowledge Browser — donut prototype</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="stage-wrap">
+      <canvas id="stage"></canvas>
+      <div id="center-label">
+        <h2 id="entity-name"></h2>
+        <div id="entity-type"></div>
+        <ul id="entity-literals"></ul>
+      </div>
+    </div>
+    <div id="sidebar">
+      <h1>Visual Knowledge Browser</h1>
+      <p id="hint"></p>
+      <p id="segment-info"></p>
+    </div>
+  </div>
+
+  <script src="api.js"></script>
+  <script src="donut.js"></script>
+  <script src="network.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
