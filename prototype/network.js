@@ -9,6 +9,11 @@ const OPEN_RADIUS = 130;
 const CLOSED_RADIUS = 34;
 const FOCUSED_LEAF_RADIUS = 44;
 const HALO_PAD = 10;
+// The ring's inner hole, in the open (non-leaf) state — where the entity's
+// image, if any, gets drawn. Matches the collapsed-then-settled stroke width
+// used by donut.js's DonutSegment (STROKE_EXPANDED/OUTER_BORDER).
+const OPEN_HOLE_RADIUS = OPEN_RADIUS - STROKE_EXPANDED / 2 - OUTER_BORDER;
+const THUMB_WIDTH = 400;
 const SPRING_LENGTH_CLOSED = 150;
 const SPRING_LENGTH_OPEN = 260;
 const SPRING_STRENGTH = 0.02;
@@ -35,6 +40,20 @@ class GraphNode {
     this.open = false;
     this.dragging = false;
     this.donut = buildDonut(entity, { x, y, radius: OPEN_RADIUS });
+
+    this.imageEl = null;
+    this.imageLoaded = false;
+    if (entity.image?.iiifBase) {
+      const img = new Image();
+      img.onload = () => {
+        this.imageEl = img;
+        this.imageLoaded = true;
+      };
+      img.onerror = () => {
+        this.imageLoaded = false;
+      };
+      img.src = `${entity.image.iiifBase}/full/${THUMB_WIDTH},/0/default.jpg`;
+    }
   }
 
   // A "dead end": nothing to expand into, so it never gets the full ring
@@ -117,6 +136,22 @@ function truncateLabel(text, max) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+// Draws `img` clipped to a circle at (cx, cy), scaled to cover the circle's
+// bounding box (like CSS `background-size: cover`) rather than distorting it.
+function drawImageInCircle(ctx, img, cx, cy, radius) {
+  const boxSize = radius * 2;
+  const scale = Math.max(boxSize / img.width, boxSize / img.height);
+  const w = img.width * scale;
+  const h = img.height * scale;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, TWO_PI);
+  ctx.clip();
+  ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
+  ctx.restore();
+}
+
 // Shrinks the font (down to a floor) to fit `text` within maxWidth, then
 // truncates with an ellipsis as a last resort — used for the record-type
 // label inside a closed node's circle, whose size varies (Fonds vs Organisation).
@@ -177,7 +212,10 @@ class Network {
     return this.nodes.find((n) => n.open) || null;
   }
 
-  tick(width, height) {
+  // centerX/centerY: the world-space point the gentle recentering force pulls
+  // toward — the caller passes whatever world point is currently at the
+  // middle of the screen, so panning doesn't fight a stale fixed target.
+  tick(centerX, centerY) {
     for (const n of this.nodes) {
       n.fx = 0;
       n.fy = 0;
@@ -218,8 +256,8 @@ class Network {
 
     for (const n of this.nodes) {
       if (n.dragging) continue;
-      n.fx += (width / 2 - n.x) * CENTER_PULL;
-      n.fy += (height / 2 - n.y) * CENTER_PULL;
+      n.fx += (centerX - n.x) * CENTER_PULL;
+      n.fy += (centerY - n.y) * CENTER_PULL;
       n.vx = (n.vx + n.fx) * DAMPING;
       n.vy = (n.vy + n.fy) * DAMPING;
       n.x += n.vx;
@@ -250,6 +288,7 @@ class Network {
       if (open.isLeaf) {
         open.drawClosed(ctx); // dead end: no ring to expand into, just a focused circle
       } else {
+        if (open.imageLoaded) drawImageInCircle(ctx, open.imageEl, open.x, open.y, OPEN_HOLE_RADIUS);
         open.donut.draw(ctx);
         open.drawLabel(ctx, OPEN_RADIUS + 20);
       }

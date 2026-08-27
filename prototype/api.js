@@ -68,7 +68,29 @@ async function fetchConcept(iri) {
   const note = firstOf(node["skos:scopeNote"]);
   if (note) literals.push({ name: "Note", value: note });
 
-  return { id: iri, name: firstOf(node["skos:prefLabel"]) || humanizeIri(iri), typeLabel: "Concept", literals, segments: [] };
+  return {
+    id: iri,
+    name: firstOf(node["skos:prefLabel"]) || humanizeIri(iri),
+    typeLabel: "Concept",
+    literals,
+    segments: [],
+    image: null,
+  };
+}
+
+function resolvePrimaryImage(contextNode, index) {
+  const docsList = contextNode?.["memorix:hasDigitalDocument"]?.["@list"] || [];
+  if (!docsList.length) return null;
+
+  const firstAsset = index.get(docsList[0]["@id"]);
+  const iiifRef = firstAsset?.["memorix:iiif"];
+  if (!iiifRef?.["@id"]) return null;
+
+  return {
+    iiifBase: iiifRef["@id"],
+    width: Number(firstOf(firstAsset["schema:width"])) || null,
+    height: Number(firstOf(firstAsset["schema:height"])) || null,
+  };
 }
 
 function mapRecordNode(focus, uuid, index) {
@@ -95,8 +117,9 @@ function mapRecordNode(focus, uuid, index) {
     value: values.join("; "),
   }));
   const segments = [...segmentsMap.values()].filter((s) => s.values.length);
+  const image = resolvePrimaryImage(contextNode, index);
 
-  return { id: focus["@id"], name, typeLabel: typeLabelFrom(focus["@type"]), literals, segments };
+  return { id: focus["@id"], name, typeLabel: typeLabelFrom(focus["@type"]), literals, segments, image };
 }
 
 function handleValue(key, value, ctx) {
@@ -248,4 +271,36 @@ function labelFor(key) {
   const spaced = stripped.replace(/^has/, "").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
   const label = spaced || stripped;
   return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+// Generic reverse-link lookup: every record referencing `iri` from ANY of its
+// own fields, regardless of record type or property — see /search/records'
+// `_link` field. Optionally narrowed with a full-text keyword (needed since a
+// popular concept/person can be linked from hundreds of thousands of records).
+async function fetchBacklinks(iri, { keyword = "", page = 1, perPage = 12 } = {}) {
+  const linkQuery = { type: "FieldQuery", operator: "equals", field: "_link", value: iri };
+  const query = keyword.trim()
+    ? { type: "AndQuery", queries: [linkQuery, { type: "FullTextQuery", query: keyword.trim() }] }
+    : linkQuery;
+
+  const res = await fetch(`${API_BASE}/search/records`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pagination: { page, perPage }, query }),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const data = await res.json();
+
+  return {
+    total: data.total,
+    page,
+    perPage,
+    hasMore: page * perPage < data.total,
+    rows: data.rows.map((r) => ({
+      id: `${API_BASE}/${r.id}`,
+      name: r.title,
+      typeLabel: r.data?.recordType?.title || r.data?.recordType?.id || "",
+      thumbIri: r.media?.rows?.[0]?.iiif || null,
+    })),
+  };
 }

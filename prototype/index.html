@@ -19,6 +19,21 @@
       <h1>Visual Knowledge Browser</h1>
       <p id="hint"></p>
       <p id="segment-info"></p>
+
+      <div id="details" class="hidden">
+        <h2 id="detail-name"></h2>
+        <div id="detail-type"></div>
+        <a id="detail-source" target="_blank" rel="noopener">View source ↗</a>
+        <ul id="detail-literals"></ul>
+      </div>
+
+      <div id="backlinks" class="hidden">
+        <h3>Linked from elsewhere</h3>
+        <p id="backlinks-summary"></p>
+        <input id="backlinks-filter" type="text" placeholder="Narrow by keyword…" />
+        <ul id="backlinks-results"></ul>
+        <button id="backlinks-more" class="hidden">Load more</button>
+      </div>
     </div>
   </div>
 

@@ -1,5 +1,6 @@
 const canvas = document.getElementById("stage");
 const ctx = canvas.getContext("2d");
+
 const centerLabelEl = document.getElementById("center-label");
 const nameEl = document.getElementById("entity-name");
 const typeEl = document.getElementById("entity-type");
@@ -7,14 +8,37 @@ const literalsEl = document.getElementById("entity-literals");
 const hintEl = document.getElementById("hint");
 const segmentInfoEl = document.getElementById("segment-info");
 
+const detailsEl = document.getElementById("details");
+const detailNameEl = document.getElementById("detail-name");
+const detailTypeEl = document.getElementById("detail-type");
+const detailSourceEl = document.getElementById("detail-source");
+const detailLiteralsEl = document.getElementById("detail-literals");
+
+const backlinksEl = document.getElementById("backlinks");
+const backlinksSummaryEl = document.getElementById("backlinks-summary");
+const backlinksFilterEl = document.getElementById("backlinks-filter");
+const backlinksResultsEl = document.getElementById("backlinks-results");
+const backlinksMoreEl = document.getElementById("backlinks-more");
+
 const DEFAULT_ENTITY_IRI = "https://id.archief.amsterdam/resources/records/02b5176c-8dec-7410-a81b-b87cd82537c2";
 const SPAWN_DISTANCE = 180;
+const BACKLINKS_PER_PAGE = 12;
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 2.5;
 
 const network = new Network();
 const pendingFetches = new Map();
+const viewport = { x: 0, y: 0, scale: 1 };
 
 let dragNode = null;
 let dragMoved = false;
+let panning = false;
+let panStart = null;
+let panOrigin = null;
+
+let backlinksSeq = 0;
+let backlinksState = { iri: null, keyword: "", page: 1 };
+let backlinksDebounce = null;
 
 function truncate(text, max) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
@@ -38,10 +62,20 @@ function toLocal(e) {
   return { mx: e.clientX - rect.left, my: e.clientY - rect.top };
 }
 
+function toWorld(mx, my) {
+  return { wx: (mx - viewport.x) / viewport.scale, wy: (my - viewport.y) / viewport.scale };
+}
+
+function toScreen(wx, wy) {
+  return { sx: wx * viewport.scale + viewport.x, sy: wy * viewport.scale + viewport.y };
+}
+
 function selectNode(node) {
   network.select(node);
   updateEntityPanel(node.entity);
   updateSegmentInfo();
+  backlinksFilterEl.value = "";
+  loadBacklinks(node.entity.id, "", 1);
 }
 
 function updateEntityPanel(entity) {
@@ -57,11 +91,24 @@ function updateEntityPanel(entity) {
   hintEl.textContent = entity.segments.length
     ? "Hover the open node to inspect it, click a wedge to add a connected node. Click any node to bring it into focus; drag to rearrange."
     : "No linked records to explore from here. Click another node to bring it into focus.";
+
+  detailsEl.classList.remove("hidden");
+  detailNameEl.textContent = entity.name;
+  detailTypeEl.textContent = entity.typeLabel || "";
+  detailSourceEl.href = entity.id;
+  detailLiteralsEl.innerHTML = "";
+  for (const lit of entity.literals) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="lit-name">${lit.name}</span><span class="lit-value">${lit.value}</span>`;
+    detailLiteralsEl.appendChild(li);
+  }
 }
 
 // Keeps the entity-details card glued to the currently open node — inside
 // its ring's hole while it has one, or hanging below it when it's a leaf
-// (dead-end) node that's just a small focused circle.
+// (dead-end) node that's just a small focused circle. Follows the current
+// pan/zoom (the card itself stays a constant screen size, only its position
+// tracks the node).
 function positionCenterLabel() {
   const open = network.openNode;
   if (!open) {
@@ -70,8 +117,16 @@ function positionCenterLabel() {
   }
   centerLabelEl.classList.remove("hidden");
   centerLabelEl.classList.toggle("below", open.isLeaf);
-  centerLabelEl.style.left = `${open.x}px`;
-  centerLabelEl.style.top = open.isLeaf ? `${open.y + FOCUSED_LEAF_RADIUS + HALO_PAD + 24}px` : `${open.y}px`;
+  centerLabelEl.classList.toggle("on-image", !open.isLeaf && open.imageLoaded);
+
+  const screen = toScreen(open.x, open.y);
+  centerLabelEl.style.left = `${screen.sx}px`;
+  if (open.isLeaf) {
+    const worldOffset = FOCUSED_LEAF_RADIUS + HALO_PAD + 24;
+    centerLabelEl.style.top = `${screen.sy + worldOffset * viewport.scale}px`;
+  } else {
+    centerLabelEl.style.top = `${screen.sy}px`;
+  }
 }
 
 function updateSegmentInfo() {
@@ -112,13 +167,97 @@ async function navigateFrom(fromNode, targetIri) {
   selectNode(target);
 }
 
+// --- Reverse-link ("what else links here") explorer ---------------------
+
+async function loadBacklinks(iri, keyword, page) {
+  const seq = ++backlinksSeq;
+  backlinksEl.classList.remove("hidden");
+  backlinksSummaryEl.textContent = "Searching…";
+  backlinksMoreEl.classList.add("hidden");
+  if (page === 1) backlinksResultsEl.innerHTML = "";
+
+  let result;
+  try {
+    result = await fetchBacklinks(iri, { keyword, page, perPage: BACKLINKS_PER_PAGE });
+  } catch (err) {
+    if (seq !== backlinksSeq) return;
+    backlinksSummaryEl.textContent = `Search failed: ${err.message}`;
+    return;
+  }
+  if (seq !== backlinksSeq) return;
+
+  backlinksState = { iri, keyword, page };
+  backlinksSummaryEl.textContent = result.total
+    ? `${result.total.toLocaleString()} record${result.total === 1 ? "" : "s"} link here`
+    : "No other records link here.";
+
+  for (const row of result.rows) backlinksResultsEl.appendChild(renderBacklinkRow(row));
+  backlinksMoreEl.classList.toggle("hidden", !result.hasMore);
+}
+
+function renderBacklinkRow(row) {
+  const li = document.createElement("li");
+  li.className = "backlink-row";
+
+  if (row.thumbIri) {
+    const img = document.createElement("img");
+    img.className = "backlink-thumb";
+    img.src = `${row.thumbIri}/full/60,/0/default.jpg`;
+    img.alt = "";
+    li.appendChild(img);
+  } else {
+    const placeholder = document.createElement("span");
+    placeholder.className = "backlink-thumb backlink-thumb-empty";
+    li.appendChild(placeholder);
+  }
+
+  const title = document.createElement("span");
+  title.className = "backlink-title";
+  title.textContent = truncate(row.name, 60);
+  title.title = row.name;
+  li.appendChild(title);
+
+  li.addEventListener("click", () => {
+    const open = network.openNode;
+    if (open) navigateFrom(open, row.id);
+  });
+
+  return li;
+}
+
+backlinksFilterEl.addEventListener("input", () => {
+  clearTimeout(backlinksDebounce);
+  const keyword = backlinksFilterEl.value;
+  backlinksDebounce = setTimeout(() => {
+    const iri = network.openNode?.entity.id;
+    if (iri) loadBacklinks(iri, keyword, 1);
+  }, 300);
+});
+
+backlinksMoreEl.addEventListener("click", () => {
+  loadBacklinks(backlinksState.iri, backlinksState.keyword, backlinksState.page + 1);
+});
+
+// --- Canvas interaction: hover/click on the open ring, drag nodes, pan/zoom the view ---
+
 canvas.addEventListener("mousedown", (e) => {
   const { mx, my } = toLocal(e);
-  const hit = network.nodes.find((n) => n.hitHub(mx, my));
-  if (!hit) return;
-  dragNode = hit;
-  dragNode.dragging = true;
-  dragMoved = false;
+  const { wx, wy } = toWorld(mx, my);
+
+  const hit = network.nodes.find((n) => n.hitHub(wx, wy));
+  if (hit) {
+    dragNode = hit;
+    dragNode.dragging = true;
+    dragMoved = false;
+    return;
+  }
+
+  const open = network.openNode;
+  if (open && open.donut.hitTest(wx, wy)) return; // let the click handler navigate
+
+  panning = true;
+  panStart = { mx, my };
+  panOrigin = { x: viewport.x, y: viewport.y };
 });
 
 canvas.addEventListener("mousemove", (e) => {
@@ -126,31 +265,46 @@ canvas.addEventListener("mousemove", (e) => {
 
   if (dragNode) {
     dragMoved = true;
-    dragNode.x = mx;
-    dragNode.y = my;
+    const { wx, wy } = toWorld(mx, my);
+    dragNode.x = wx;
+    dragNode.y = wy;
     dragNode.vx = 0;
     dragNode.vy = 0;
     canvas.style.cursor = "grabbing";
     return;
   }
 
+  if (panning) {
+    viewport.x = panOrigin.x + (mx - panStart.mx);
+    viewport.y = panOrigin.y + (my - panStart.my);
+    canvas.style.cursor = "grabbing";
+    return;
+  }
+
+  const { wx, wy } = toWorld(mx, my);
   const open = network.openNode;
   let cursor = "default";
   if (open) {
-    const slice = open.donut.hitTest(mx, my);
+    const slice = open.donut.hitTest(wx, wy);
     open.donut.updateHover(slice);
     if (slice) cursor = "pointer";
     updateSegmentInfo();
   }
-  if (cursor === "default" && network.nodes.some((n) => n.hitHub(mx, my))) cursor = "pointer";
+  if (cursor === "default" && network.nodes.some((n) => n.hitHub(wx, wy))) cursor = "pointer";
   canvas.style.cursor = cursor;
 });
 
 window.addEventListener("mouseup", () => {
-  if (!dragNode) return;
-  dragNode.dragging = false;
-  if (!dragMoved) selectNode(dragNode);
-  dragNode = null;
+  if (dragNode) {
+    dragNode.dragging = false;
+    if (!dragMoved) selectNode(dragNode);
+    dragNode = null;
+    return;
+  }
+  if (panning) {
+    panning = false;
+    canvas.style.cursor = "default";
+  }
 });
 
 canvas.addEventListener("click", (e) => {
@@ -161,16 +315,39 @@ canvas.addEventListener("click", (e) => {
   const open = network.openNode;
   if (!open) return;
   const { mx, my } = toLocal(e);
-  const slice = open.donut.hitTest(mx, my);
+  const { wx, wy } = toWorld(mx, my);
+  const slice = open.donut.hitTest(wx, wy);
   if (slice) navigateFrom(open, slice.id);
 });
+
+canvas.addEventListener(
+  "wheel",
+  (e) => {
+    e.preventDefault();
+    const { mx, my } = toLocal(e);
+    const { wx, wy } = toWorld(mx, my);
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const newScale = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, viewport.scale * factor));
+    viewport.x = mx - wx * newScale;
+    viewport.y = my - wy * newScale;
+    viewport.scale = newScale;
+  },
+  { passive: false }
+);
 
 window.addEventListener("resize", resizeCanvas);
 
 function frame() {
-  network.tick(canvas.width, canvas.height);
+  const center = toWorld(canvas.width / 2, canvas.height / 2);
+  network.tick(center.wx, center.wy);
+
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.translate(viewport.x, viewport.y);
+  ctx.scale(viewport.scale, viewport.scale);
   network.draw(ctx);
+  ctx.restore();
+
   positionCenterLabel();
   requestAnimationFrame(frame);
 }
