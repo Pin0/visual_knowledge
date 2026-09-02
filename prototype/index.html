@@ -12,12 +12,19 @@
     </div>
     <div id="sidebar">
       <h1>Visual Knowledge Browser</h1>
+
+      <div id="source-picker">
+        <label for="source-select">Collection</label>
+        <select id="source-select"></select>
+      </div>
+
       <p id="hint"></p>
       <p id="segment-info"></p>
 
       <div id="details" class="hidden">
         <h2 id="detail-name"></h2>
         <div id="detail-type"></div>
+        <div id="detail-source-label"></div>
         <a id="detail-source" target="_blank" rel="noopener">View source ↗</a>
         <ul id="detail-literals"></ul>
       </div>

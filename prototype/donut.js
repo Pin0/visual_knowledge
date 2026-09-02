@@ -50,10 +50,11 @@ class Tween {
 }
 
 class DonutSlice {
-  constructor(id, name, segment) {
+  constructor(id, name, segment, baseUrl = null) {
     this.id = id;
     this.name = name;
     this.segment = segment;
+    this.baseUrl = baseUrl;
     this.angleStart = 0;
     this.angleStop = 0;
     this.hovering = false;
@@ -267,7 +268,7 @@ function buildDonut(entity, { x, y, radius }) {
   for (const seg of entity.segments) {
     const segment = new DonutSegment(seg.id, seg.name, donut);
     for (const v of seg.values) {
-      segment.addSlice(new DonutSlice(v.id, v.name, segment));
+      segment.addSlice(new DonutSlice(v.id, v.name, segment, v.baseUrl));
     }
     if (segment.slices.length) donut.addSegment(segment);
   }

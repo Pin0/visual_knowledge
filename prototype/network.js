@@ -40,6 +40,7 @@ class GraphNode {
     this.vy = 0;
     this.open = false;
     this.dragging = false;
+    this.crossSourceChecked = false;
     this.donut = buildDonut(entity, { x, y, radius: OPEN_RADIUS });
 
     this.imageEl = null;
@@ -82,6 +83,21 @@ class GraphNode {
   syncDonutPosition() {
     this.donut.x = this.x;
     this.donut.y = this.y;
+  }
+
+  // Turns matches found by findCrossSourceMatches into a real segment/slices
+  // on this node, live — Donut.draw() re-runs layout() from this.segments
+  // every frame, and isLeaf/radius are getters off entity.segments.length, so
+  // a formerly dead-end external node just starts rendering as a full ring
+  // the next frame once this runs, with no other code path needing to change.
+  addCrossSourceSegment(source, rows) {
+    const segId = `also-in:${source.id}`;
+    if (this.entity.segments.some((s) => s.id === segId)) return;
+    const values = rows.map((r) => ({ id: r.id, name: r.name, baseUrl: source.baseUrl }));
+    this.entity.segments.push({ id: segId, name: `Also in ${source.label}`, values });
+    const segment = new DonutSegment(segId, `Also in ${source.label}`, this.donut);
+    for (const v of values) segment.addSlice(new DonutSlice(v.id, v.name, segment, v.baseUrl));
+    if (segment.slices.length) this.donut.addSegment(segment);
   }
 
   // Drag/select target: the whole circle for a closed node, but only the

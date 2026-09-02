@@ -1,12 +1,15 @@
 const canvas = document.getElementById("stage");
 const ctx = canvas.getContext("2d");
 
+const sourceSelectEl = document.getElementById("source-select");
+
 const hintEl = document.getElementById("hint");
 const segmentInfoEl = document.getElementById("segment-info");
 
 const detailsEl = document.getElementById("details");
 const detailNameEl = document.getElementById("detail-name");
 const detailTypeEl = document.getElementById("detail-type");
+const detailSourceLabelEl = document.getElementById("detail-source-label");
 const detailSourceEl = document.getElementById("detail-source");
 const detailLiteralsEl = document.getElementById("detail-literals");
 
@@ -16,7 +19,6 @@ const backlinksFilterEl = document.getElementById("backlinks-filter");
 const backlinksResultsEl = document.getElementById("backlinks-results");
 const backlinksMoreEl = document.getElementById("backlinks-more");
 
-const DEFAULT_ENTITY_IRI = "https://id.archief.amsterdam/resources/records/02b5176c-8dec-7410-a81b-b87cd82537c2";
 const SPAWN_DISTANCE = 180;
 const BACKLINKS_PER_PAGE = 12;
 const BACKLINKS_DEBOUNCE_MS = 700;
@@ -35,16 +37,16 @@ let panStart = null;
 let panOrigin = null;
 
 let backlinksSeq = 0;
-let backlinksState = { iri: null, keyword: "", page: 1 };
+let backlinksState = { iri: null, baseUrl: null, keyword: "", page: 1 };
 let backlinksDebounce = null;
 
 function truncate(text, max) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-function getEntity(iri) {
+function getEntity(iri, baseUrl) {
   if (pendingFetches.has(iri)) return pendingFetches.get(iri);
-  const promise = fetchEntity(iri).finally(() => pendingFetches.delete(iri));
+  const promise = fetchEntity(iri, baseUrl).finally(() => pendingFetches.delete(iri));
   pendingFetches.set(iri, promise);
   return promise;
 }
@@ -69,7 +71,41 @@ function selectNode(node) {
   updateEntityPanel(node.entity);
   updateSegmentInfo();
   backlinksFilterEl.value = "";
-  loadBacklinks(node.entity.id, "", 1);
+  if (node.entity.source) {
+    loadBacklinks(node.entity.id, node.entity.source.baseUrl, "", 1);
+  } else {
+    loadCrossSourceBacklinks(node);
+  }
+}
+
+// For a genuinely external node (Wikidata/RKD/...) there's no "own source" to
+// search backlinks within, but every configured source can still be searched
+// for records that reference this same IRI — the same _link lookup
+// loadBacklinks uses, just run against each source in turn. Feeds both the
+// "Linked from elsewhere" panel and (once, from the unfiltered set) the
+// donut ring via GraphNode.addCrossSourceSegment.
+async function loadCrossSourceBacklinks(node, keyword = "") {
+  const seq = ++backlinksSeq;
+  backlinksEl.classList.remove("hidden");
+  backlinksSummaryEl.textContent = "Searching…";
+  backlinksMoreEl.classList.add("hidden");
+  backlinksResultsEl.innerHTML = "";
+
+  const matches = await findCrossSourceMatches(node.entity.id, keyword);
+  if (seq !== backlinksSeq) return;
+
+  if (network.openNode === node && !node.crossSourceChecked) {
+    node.crossSourceChecked = true;
+    for (const { source, rows } of matches) node.addCrossSourceSegment(source, rows);
+  }
+
+  const totalRows = matches.reduce((n, m) => n + m.rows.length, 0);
+  backlinksSummaryEl.textContent = totalRows
+    ? `${totalRows} record${totalRows === 1 ? "" : "s"} link here`
+    : "No other records link here.";
+  for (const { source, rows } of matches) {
+    for (const row of rows) backlinksResultsEl.appendChild(renderBacklinkRow({ ...row, sourceLabel: source.label }));
+  }
 }
 
 function deselectAll() {
@@ -90,6 +126,7 @@ function updateEntityPanel(entity) {
   detailsEl.classList.remove("hidden");
   detailNameEl.textContent = entity.name;
   detailTypeEl.textContent = entity.typeLabel || "";
+  detailSourceLabelEl.textContent = entity.source ? entity.source.label : "External";
   detailSourceEl.href = entity.id;
   detailLiteralsEl.innerHTML = "";
   for (const lit of entity.literals) {
@@ -105,14 +142,14 @@ function updateSegmentInfo() {
   segmentInfoEl.textContent = seg ? `${seg.id} (${seg.slices.length})` : "";
 }
 
-async function navigateFrom(fromNode, targetIri) {
+async function navigateFrom(fromNode, targetIri, baseUrl) {
   let target = network.findNode(targetIri);
 
   if (!target) {
     hintEl.textContent = "Loading…";
     let entity;
     try {
-      entity = await getEntity(targetIri);
+      entity = await getEntity(targetIri, baseUrl);
     } catch (err) {
       hintEl.textContent =
         err instanceof NotExplorableError
@@ -139,7 +176,7 @@ async function navigateFrom(fromNode, targetIri) {
 
 // --- Reverse-link ("what else links here") explorer ---------------------
 
-async function loadBacklinks(iri, keyword, page) {
+async function loadBacklinks(iri, baseUrl, keyword, page) {
   const seq = ++backlinksSeq;
   backlinksEl.classList.remove("hidden");
   backlinksSummaryEl.textContent = "Searching…";
@@ -148,7 +185,7 @@ async function loadBacklinks(iri, keyword, page) {
 
   let result;
   try {
-    result = await fetchBacklinks(iri, { keyword, page, perPage: BACKLINKS_PER_PAGE });
+    result = await fetchBacklinks(iri, baseUrl, { keyword, page, perPage: BACKLINKS_PER_PAGE });
   } catch (err) {
     if (seq !== backlinksSeq) return;
     backlinksSummaryEl.textContent = `Search failed: ${err.message}`;
@@ -156,7 +193,7 @@ async function loadBacklinks(iri, keyword, page) {
   }
   if (seq !== backlinksSeq) return;
 
-  backlinksState = { iri, keyword, page };
+  backlinksState = { iri, baseUrl, keyword, page };
   backlinksSummaryEl.textContent = result.total
     ? `${result.total.toLocaleString()} record${result.total === 1 ? "" : "s"} link here`
     : "No other records link here.";
@@ -181,15 +218,27 @@ function renderBacklinkRow(row) {
     li.appendChild(placeholder);
   }
 
+  const text = document.createElement("div");
+  text.className = "backlink-text";
+
+  if (row.sourceLabel) {
+    const source = document.createElement("span");
+    source.className = "backlink-source";
+    source.textContent = row.sourceLabel;
+    text.appendChild(source);
+  }
+
   const title = document.createElement("span");
   title.className = "backlink-title";
   title.textContent = truncate(row.name, 60);
   title.title = row.name;
-  li.appendChild(title);
+  text.appendChild(title);
+
+  li.appendChild(text);
 
   li.addEventListener("click", () => {
     const open = network.openNode;
-    if (open) navigateFrom(open, row.id);
+    if (open) navigateFrom(open, row.id, row.baseUrl);
   });
 
   return li;
@@ -199,13 +248,15 @@ backlinksFilterEl.addEventListener("input", () => {
   clearTimeout(backlinksDebounce);
   const keyword = backlinksFilterEl.value;
   backlinksDebounce = setTimeout(() => {
-    const iri = network.openNode?.entity.id;
-    if (iri) loadBacklinks(iri, keyword, 1);
+    const open = network.openNode;
+    if (!open) return;
+    if (open.entity.source) loadBacklinks(open.entity.id, open.entity.source.baseUrl, keyword, 1);
+    else loadCrossSourceBacklinks(open, keyword);
   }, BACKLINKS_DEBOUNCE_MS);
 });
 
 backlinksMoreEl.addEventListener("click", () => {
-  loadBacklinks(backlinksState.iri, backlinksState.keyword, backlinksState.page + 1);
+  loadBacklinks(backlinksState.iri, backlinksState.baseUrl, backlinksState.keyword, backlinksState.page + 1);
 });
 
 // --- Canvas interaction: hover/click on the open ring, drag nodes, pan/zoom the view ---
@@ -291,7 +342,7 @@ canvas.addEventListener("click", (e) => {
   if (open) {
     const slice = open.donut.hitTest(wx, wy);
     if (slice) {
-      navigateFrom(open, slice.id);
+      navigateFrom(open, slice.id, slice.baseUrl || open.entity.source?.baseUrl);
       return;
     }
   }
@@ -332,20 +383,56 @@ function frame() {
   requestAnimationFrame(frame);
 }
 
-async function init() {
-  resizeCanvas();
-  hintEl.textContent = "Loading…";
-  let entity;
-  try {
-    entity = await getEntity(DEFAULT_ENTITY_IRI);
-  } catch (err) {
-    hintEl.textContent = `Failed to load the starting record: ${err.message}`;
-    requestAnimationFrame(frame);
+// Loads (or, if already present, just re-focuses) a source's starting
+// record. Switching the collection dropdown does NOT reset the canvas —
+// it adds the other collection's root alongside whatever's already there,
+// so a shared Wikidata/RKD reference can later connect the two.
+function findOrCreateSourceRoot(source) {
+  const existing = network.findNode(source.defaultEntity);
+  if (existing) {
+    selectNode(existing);
     return;
   }
-  const root = new GraphNode(entity, canvas.width / 2, canvas.height / 2);
-  network.addNode(root);
-  selectNode(root);
+
+  hintEl.textContent = "Loading…";
+  getEntity(source.defaultEntity, source.baseUrl)
+    .then((entity) => {
+      // The requested IRI can differ from the entity's own canonical id
+      // (e.g. a REST-style /resources/records/{uuid} URL vs. its resolved
+      // short @id) — re-check under the resolved id before adding a node,
+      // same guard navigateFrom uses for the equivalent race.
+      const alreadyThere = network.findNode(entity.id);
+      if (alreadyThere) {
+        selectNode(alreadyThere);
+        return;
+      }
+      const center = toWorld(canvas.width / 2, canvas.height / 2);
+      const angle = Math.random() * TWO_PI;
+      const dist = network.nodes.length ? SPAWN_DISTANCE : 0;
+      const node = new GraphNode(entity, center.wx + Math.cos(angle) * dist, center.wy + Math.sin(angle) * dist);
+      network.addNode(node);
+      selectNode(node);
+    })
+    .catch((err) => {
+      hintEl.textContent = `Failed to load ${source.label}: ${err.message}`;
+    });
+}
+
+for (const source of SOURCES) {
+  const option = document.createElement("option");
+  option.value = source.id;
+  option.textContent = source.label;
+  sourceSelectEl.appendChild(option);
+}
+
+sourceSelectEl.addEventListener("change", () => {
+  const source = SOURCES.find((s) => s.id === sourceSelectEl.value);
+  findOrCreateSourceRoot(source);
+});
+
+function init() {
+  resizeCanvas();
+  findOrCreateSourceRoot(SOURCES[0]);
 }
 
 init();

@@ -62,6 +62,29 @@ body {
   margin: 0 0 20px;
 }
 
+#source-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+#source-picker label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #999;
+}
+
+#source-picker select {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  background: #fff;
+}
+
 #hint {
   font-size: 12px;
   color: #999;
@@ -91,6 +114,14 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: #aaa;
+}
+
+#detail-source-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #b7b0d8;
+  margin-top: 2px;
 }
 
 #detail-source {
@@ -183,6 +214,19 @@ body {
 
 .backlink-thumb-empty {
   display: block;
+}
+
+.backlink-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.backlink-source {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #aaa;
 }
 
 .backlink-title {
