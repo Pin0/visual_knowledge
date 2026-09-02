@@ -91,7 +91,7 @@ function updateEntityPanel(entity) {
 function updateSegmentInfo() {
   const open = network.openNode;
   const seg = open && open.donut.selectedSegment;
-  segmentInfoEl.textContent = seg ? `${seg.label} (${seg.slices.length})` : "";
+  segmentInfoEl.textContent = seg ? `${seg.id} (${seg.slices.length})` : "";
 }
 
 async function navigateFrom(fromNode, targetIri) {
