@@ -14,6 +14,7 @@ const HALO_PAD = 10;
 // used by donut.js's DonutSegment (STROKE_EXPANDED/OUTER_BORDER).
 const OPEN_HOLE_RADIUS = OPEN_RADIUS - STROKE_EXPANDED / 2 - OUTER_BORDER;
 const THUMB_WIDTH = 400;
+const THUMB_WIDTH_SMALL = 160; // used for closed/focused-leaf circles
 const SPRING_LENGTH_CLOSED = 150;
 const SPRING_LENGTH_OPEN = 260;
 const SPRING_STRENGTH = 0.02;
@@ -43,16 +44,23 @@ class GraphNode {
 
     this.imageEl = null;
     this.imageLoaded = false;
+    this.imageElSmall = null;
+    this.imageSmallLoaded = false;
     if (entity.image?.iiifBase) {
-      const img = new Image();
-      img.onload = () => {
+      const loadThumb = (width, assign) => {
+        const img = new Image();
+        img.onload = () => assign(img, true);
+        img.onerror = () => assign(null, false);
+        img.src = `${entity.image.iiifBase}/full/${width},/0/default.jpg`;
+      };
+      loadThumb(THUMB_WIDTH, (img, ok) => {
         this.imageEl = img;
-        this.imageLoaded = true;
-      };
-      img.onerror = () => {
-        this.imageLoaded = false;
-      };
-      img.src = `${entity.image.iiifBase}/full/${THUMB_WIDTH},/0/default.jpg`;
+        this.imageLoaded = ok;
+      });
+      loadThumb(THUMB_WIDTH_SMALL, (img, ok) => {
+        this.imageElSmall = img;
+        this.imageSmallLoaded = ok;
+      });
     }
   }
 
@@ -106,6 +114,10 @@ class GraphNode {
     ctx.arc(this.x, this.y, radius, 0, TWO_PI);
     ctx.fill();
 
+    if (this.imageSmallLoaded) {
+      drawImageInCircle(ctx, this.imageElSmall, this.x, this.y, radius);
+    }
+
     ctx.strokeStyle = this.color;
     ctx.lineWidth = focused ? 8 : 6;
     ctx.beginPath();
@@ -113,7 +125,7 @@ class GraphNode {
     ctx.stroke();
 
     if (this.entity.typeLabel) {
-      drawFittedLabel(ctx, this.entity.typeLabel.toUpperCase(), this.x, this.y, radius * 2 - 12, this.color);
+      drawFittedLabel(ctx, this.entity.typeLabel.toUpperCase(), this.x, this.y, radius * 2 - 12, this.color, this.imageSmallLoaded);
     }
     ctx.restore();
 
@@ -153,7 +165,7 @@ function drawImageInCircle(ctx, img, cx, cy, radius) {
 // Shrinks the font (down to a floor) to fit `text` within maxWidth, then
 // truncates with an ellipsis as a last resort — used for the record-type
 // label inside a closed node's circle, whose size varies (Fonds vs Organisation).
-function drawFittedLabel(ctx, text, x, y, maxWidth, color) {
+function drawFittedLabel(ctx, text, x, y, maxWidth, color, onImage) {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = color;
@@ -171,6 +183,21 @@ function drawFittedLabel(ctx, text, x, y, maxWidth, color) {
     label = label.slice(0, -1);
   }
   if (label !== text) label = `${label.slice(0, -1)}…`;
+
+  if (onImage) {
+    // A dark translucent chip behind the text guarantees contrast no matter
+    // what's underneath — a light or dark patch of the photo.
+    const textWidth = ctx.measureText(label).width;
+    const paddingX = 5;
+    const paddingY = 3;
+    const chipW = textWidth + paddingX * 2;
+    const chipH = size + paddingY * 2;
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.beginPath();
+    ctx.roundRect(x - chipW / 2, y - chipH / 2, chipW, chipH, chipH / 2);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+  }
 
   ctx.fillText(label, x, y);
 }
@@ -286,6 +313,12 @@ class Network {
       if (open.isLeaf) {
         open.drawClosed(ctx); // dead end: no ring to expand into, just a focused circle
       } else {
+        ctx.save();
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        ctx.arc(open.x, open.y, OPEN_HOLE_RADIUS, 0, TWO_PI);
+        ctx.fill();
+        ctx.restore();
         if (open.imageLoaded) drawImageInCircle(ctx, open.imageEl, open.x, open.y, OPEN_HOLE_RADIUS);
         open.donut.draw(ctx);
         open.drawLabel(ctx, OPEN_RADIUS + 20);
