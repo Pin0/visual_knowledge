@@ -127,6 +127,10 @@ class GraphNode {
     if (this.entity.typeLabel) {
       drawFittedLabel(ctx, this.entity.typeLabel.toUpperCase(), this.x, this.y, radius * 2 - 12, this.color, this.imageSmallLoaded);
     }
+
+    if (this.entity.external) {
+      drawExternalBadge(ctx, this.x, this.y, radius);
+    }
     ctx.restore();
 
     this.drawLabel(ctx, radius);
@@ -144,6 +148,31 @@ class GraphNode {
 
 function truncateLabel(text, max) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+// A small "opens elsewhere" badge for nodes resolved from a sameAs-style
+// reference to a non-archief.amsterdam source (Wikidata, RKD, …), pinned to
+// the circle's upper-right edge so it reads as a corner marker, not a label.
+function drawExternalBadge(ctx, cx, cy, radius) {
+  const bx = cx + radius * Math.SQRT1_2;
+  const by = cy - radius * Math.SQRT1_2;
+  const badgeRadius = 8;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(bx, by, badgeRadius, 0, TWO_PI);
+  ctx.fillStyle = "#333";
+  ctx.fill();
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 10px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("↗", bx, by + 0.5);
+  ctx.restore();
 }
 
 // Draws `img` clipped to a circle at (cx, cy), scaled to cover the circle's

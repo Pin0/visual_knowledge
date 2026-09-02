@@ -64,6 +64,10 @@ async function fetchRecord(iri) {
 
 async function fetchConcept(iri) {
   const node = await fetchJson(iri);
+  return conceptEntityFromNode(iri, node);
+}
+
+function conceptEntityFromNode(iri, node) {
   const literals = [];
   const note = firstOf(node["skos:scopeNote"]);
   if (note) literals.push({ name: "Note", value: note });
@@ -75,6 +79,7 @@ async function fetchConcept(iri) {
     literals,
     segments: [],
     image: null,
+    external: !iri.startsWith(API_BASE),
   };
 }
 
@@ -119,7 +124,7 @@ function mapRecordNode(focus, uuid, index) {
   const segments = [...segmentsMap.values()].filter((s) => s.values.length);
   const image = resolvePrimaryImage(contextNode, index);
 
-  return { id: focus["@id"], name, typeLabel: typeLabelFrom(focus["@type"]), literals, segments, image };
+  return { id: focus["@id"], name, typeLabel: typeLabelFrom(focus["@type"]), literals, segments, image, external: false };
 }
 
 function handleValue(key, value, ctx) {
@@ -196,12 +201,27 @@ function addLiteral(ctx, key, text) {
 function addReference(ctx, key, targetIri, name) {
   if (!ctx.segmentsMap.has(key)) ctx.segmentsMap.set(key, { id: key, name: labelFor(key), values: [] });
   ctx.segmentsMap.get(key).values.push({ id: targetIri, name: name || resolveDisplayName(targetIri, ctx.index) });
+  cacheEmbeddedConcept(targetIri, ctx.index);
+}
+
+// id.archief.amsterdam embeds a skos:Concept "shim" node — @id + skos:prefLabel,
+// nothing else — for every owl:sameAs-style target in the same @graph response,
+// including ones pointing at external sites like Wikidata or RKD. Caching it now
+// means fetchEntity resolves that target instantly later with no further fetch —
+// which matters most for external IRIs, since there's no archief.amsterdam
+// record/concept endpoint to ask for them.
+function cacheEmbeddedConcept(iri, index) {
+  if (cache.has(iri)) return;
+  const node = index.get(iri);
+  if (node && normalizeType(node["@type"]) === "skos:Concept") {
+    cache.set(iri, conceptEntityFromNode(iri, node));
+  }
 }
 
 function resolveDisplayName(iri, index) {
-  if (isConceptIri(iri)) {
-    const node = index.get(iri);
-    return (node && firstOf(node["skos:prefLabel"])) || humanizeIri(iri);
+  const node = index.get(iri);
+  if (node && normalizeType(node["@type"]) === "skos:Concept") {
+    return firstOf(node["skos:prefLabel"]) || humanizeIri(iri);
   }
 
   const uuid = extractRecordUuid(iri);
