@@ -30,6 +30,7 @@ const viewport = { x: 0, y: 0, scale: 1 };
 let dragNode = null;
 let dragMoved = false;
 let panning = false;
+let panMoved = false;
 let panStart = null;
 let panOrigin = null;
 
@@ -69,6 +70,16 @@ function selectNode(node) {
   updateSegmentInfo();
   backlinksFilterEl.value = "";
   loadBacklinks(node.entity.id, "", 1);
+}
+
+function deselectAll() {
+  network.select(null);
+  hintEl.textContent = "Click a node to bring it into focus.";
+  segmentInfoEl.textContent = "";
+  detailsEl.classList.add("hidden");
+  backlinksEl.classList.add("hidden");
+  backlinksFilterEl.value = "";
+  backlinksSeq++; // invalidate any in-flight backlinks fetch so it can't repopulate the now-hidden panel
 }
 
 function updateEntityPanel(entity) {
@@ -234,6 +245,7 @@ canvas.addEventListener("mousemove", (e) => {
   }
 
   if (panning) {
+    panMoved = true;
     viewport.x = panOrigin.x + (mx - panStart.mx);
     viewport.y = panOrigin.y + (my - panStart.my);
     canvas.style.cursor = "grabbing";
@@ -267,16 +279,26 @@ window.addEventListener("mouseup", () => {
 });
 
 canvas.addEventListener("click", (e) => {
-  if (dragMoved) {
+  if (dragMoved || panMoved) {
     dragMoved = false;
+    panMoved = false;
     return;
   }
-  const open = network.openNode;
-  if (!open) return;
   const { mx, my } = toLocal(e);
   const { wx, wy } = toWorld(mx, my);
-  const slice = open.donut.hitTest(wx, wy);
-  if (slice) navigateFrom(open, slice.id);
+
+  const open = network.openNode;
+  if (open) {
+    const slice = open.donut.hitTest(wx, wy);
+    if (slice) {
+      navigateFrom(open, slice.id);
+      return;
+    }
+  }
+
+  // Clicked empty canvas — not on any node's hub, not on the open ring — unfocus.
+  const hitNode = network.nodes.some((n) => n.hitHub(wx, wy));
+  if (!hitNode && open) deselectAll();
 });
 
 canvas.addEventListener(
