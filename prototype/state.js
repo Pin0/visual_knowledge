@@ -41,7 +41,7 @@ function parseStateFromUrl() {
     return null;
   }
 
-  if (!state || !Array.isArray(state.nodes) || !Array.isArray(state.edges)) {
+  if (!isValidState(state)) {
     console.warn(`Ignoring "${STATE_PARAM}" URL param: unexpected shape.`);
     return null;
   }
@@ -49,19 +49,54 @@ function parseStateFromUrl() {
   return state;
 }
 
+function isValidState(state) {
+  if (!state || !Array.isArray(state.nodes) || !Array.isArray(state.edges)) return false;
+
+  const nodeCount = state.nodes.length;
+  const validNode = (n) =>
+    n && typeof n === "object" && typeof n.iri === "string" && (n.s === null || n.s === undefined || typeof n.s === "string");
+  const validEdge = (e) => Array.isArray(e) && e.length === 2 && e.every((i) => Number.isInteger(i) && i >= 0 && i < nodeCount);
+  const validOpen = state.open == null || (Number.isInteger(state.open) && state.open >= 0 && state.open < nodeCount);
+
+  return state.nodes.every(validNode) && state.edges.every(validEdge) && validOpen;
+}
+
 // Rebuilds `network` from a parsed state object. Fault-tolerant: an
 // individual node whose entity fails to (re)fetch is skipped, along with any
 // edges touching it, rather than aborting the whole restore.
 async function restoreGraph(state) {
-  const results = await Promise.allSettled(
-    state.nodes.map(({ iri, s }) => getEntity(iri, s ? SOURCES.find((src) => src.id === s)?.baseUrl : undefined))
+  const entities = new Array(state.nodes.length).fill(null);
+
+  // Pass 1: nodes with a known source are independently resolvable via the
+  // API. Fetching them also warms api.js's cache with any owl:sameAs shim
+  // concepts embedded in their records, which pass 2 below depends on.
+  const sourced = [];
+  const external = [];
+  state.nodes.forEach((n, i) => (n.s ? sourced : external).push(i));
+
+  await Promise.allSettled(
+    sourced.map(async (i) => {
+      const { iri, s } = state.nodes[i];
+      const source = SOURCES.find((src) => src.id === s);
+      if (!source) {
+        console.warn(`Skipping node ${iri} in shared graph link: unknown source "${s}".`);
+        return;
+      }
+      try {
+        entities[i] = await getEntity(iri, source.baseUrl);
+      } catch (err) {
+        console.warn(`Skipping node ${iri} in shared graph link: ${err.message}`);
+      }
+    })
   );
 
-  const entities = results.map((r, i) => {
-    if (r.status === "fulfilled") return r.value;
-    console.warn(`Skipping node ${state.nodes[i].iri} in shared graph link: ${r.reason?.message || r.reason}`);
-    return null;
-  });
+  // Pass 2: external (sameAs) nodes have no record/concept endpoint of their
+  // own — they're only resolvable from the cache pass 1 just warmed.
+  for (const i of external) {
+    const { iri } = state.nodes[i];
+    entities[i] = peekCachedEntity(iri);
+    if (!entities[i]) console.warn(`Skipping node ${iri} in shared graph link: not referenced by any restored record.`);
+  }
 
   const adjacency = state.nodes.map(() => []);
   for (const [i, j] of state.edges) {
@@ -89,8 +124,8 @@ async function restoreGraph(state) {
       place(i, center.wx, center.wy);
       firstComponent = false;
     } else {
-      const angle = Math.random() * TWO_PI;
-      place(i, center.wx + Math.cos(angle) * SPAWN_DISTANCE, center.wy + Math.sin(angle) * SPAWN_DISTANCE);
+      const spawn = randomSpawnPoint(center.wx, center.wy);
+      place(i, spawn.x, spawn.y);
     }
 
     const queue = [i];
@@ -98,8 +133,8 @@ async function restoreGraph(state) {
       const from = queue.shift();
       for (const to of adjacency[from]) {
         if (visited[to]) continue;
-        const angle = Math.random() * TWO_PI;
-        place(to, placed[from].x + Math.cos(angle) * SPAWN_DISTANCE, placed[from].y + Math.sin(angle) * SPAWN_DISTANCE);
+        const spawn = randomSpawnPoint(placed[from].x, placed[from].y);
+        place(to, spawn.x, spawn.y);
         queue.push(to);
       }
     }

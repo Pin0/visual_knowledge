@@ -276,6 +276,16 @@ function cacheEmbeddedConcept(iri, index) {
   }
 }
 
+// Looks up an already-resolved entity without attempting a network fetch.
+// External (owl:sameAs) targets have no record/concept endpoint of their own
+// — they only ever become resolvable via cacheEmbeddedConcept, as a side
+// effect of fetching the record that embeds them — so state.js uses this to
+// pick them up once that fetch has happened, instead of calling fetchEntity
+// (which would throw NotExplorableError).
+function peekCachedEntity(iri) {
+  return cache.get(iri) || null;
+}
+
 function resolveDisplayName(iri, index, baseUrl) {
   const node = index.get(iri);
   if (node && normalizeType(node["@type"]) === "skos:Concept") {

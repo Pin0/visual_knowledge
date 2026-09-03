@@ -44,6 +44,11 @@ function truncate(text, max) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+function randomSpawnPoint(x, y, distance = SPAWN_DISTANCE) {
+  const angle = Math.random() * TWO_PI;
+  return { x: x + Math.cos(angle) * distance, y: y + Math.sin(angle) * distance };
+}
+
 function getEntity(iri, baseUrl) {
   if (pendingFetches.has(iri)) return pendingFetches.get(iri);
   const promise = fetchEntity(iri, baseUrl).finally(() => pendingFetches.delete(iri));
@@ -162,12 +167,8 @@ async function navigateFrom(fromNode, targetIri, baseUrl) {
 
     target = network.findNode(entity.id); // may have been added by another in-flight click while we awaited
     if (!target) {
-      const angle = Math.random() * TWO_PI;
-      target = new GraphNode(
-        entity,
-        fromNode.x + Math.cos(angle) * SPAWN_DISTANCE,
-        fromNode.y + Math.sin(angle) * SPAWN_DISTANCE
-      );
+      const spawn = randomSpawnPoint(fromNode.x, fromNode.y);
+      target = new GraphNode(entity, spawn.x, spawn.y);
       network.addNode(target);
     }
   }
@@ -409,9 +410,9 @@ function findOrCreateSourceRoot(source) {
         return;
       }
       const center = toWorld(canvas.width / 2, canvas.height / 2);
-      const angle = Math.random() * TWO_PI;
       const dist = network.nodes.length ? SPAWN_DISTANCE : 0;
-      const node = new GraphNode(entity, center.wx + Math.cos(angle) * dist, center.wy + Math.sin(angle) * dist);
+      const spawn = randomSpawnPoint(center.wx, center.wy, dist);
+      const node = new GraphNode(entity, spawn.x, spawn.y);
       network.addNode(node);
       selectNode(node);
     })
@@ -437,12 +438,17 @@ function init() {
 
   const state = parseStateFromUrl();
   if (state && state.nodes.length > 0) {
-    restoreGraph(state).then(() => {
-      if (network.nodes.length === 0) {
-        console.warn("Shared graph link failed to load any nodes; falling back to default.");
+    restoreGraph(state)
+      .then(() => {
+        if (network.nodes.length === 0) {
+          console.warn("Shared graph link failed to load any nodes; falling back to default.");
+          findOrCreateSourceRoot(SOURCES[0]);
+        }
+      })
+      .catch((err) => {
+        console.warn(`Failed to restore shared graph link, falling back to default: ${err.message}`);
         findOrCreateSourceRoot(SOURCES[0]);
-      }
-    });
+      });
     return;
   }
 
