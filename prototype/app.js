@@ -76,6 +76,7 @@ function selectNode(node) {
   } else {
     loadCrossSourceBacklinks(node);
   }
+  syncUrlFromState();
 }
 
 // For a genuinely external node (Wikidata/RKD/...) there's no "own source" to
@@ -116,6 +117,7 @@ function deselectAll() {
   backlinksEl.classList.add("hidden");
   backlinksFilterEl.value = "";
   backlinksSeq++; // invalidate any in-flight backlinks fetch so it can't repopulate the now-hidden panel
+  syncUrlFromState();
 }
 
 function updateEntityPanel(entity) {
@@ -432,6 +434,19 @@ sourceSelectEl.addEventListener("change", () => {
 
 function init() {
   resizeCanvas();
+
+  const state = parseStateFromUrl();
+  if (state && state.nodes.length > 0) {
+    restoreGraph(state).then(() => {
+      if (network.nodes.length === 0) {
+        console.warn("Shared graph link failed to load any nodes; falling back to default.");
+        findOrCreateSourceRoot(SOURCES[0]);
+      }
+    });
+    return;
+  }
+
+  if (state) console.warn("Shared graph link was empty; falling back to default.");
   findOrCreateSourceRoot(SOURCES[0]);
 }
 
